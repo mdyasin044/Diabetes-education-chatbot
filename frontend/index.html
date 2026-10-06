@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glucose Coach</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#EEF2F6;--panel:#fff;--ink:#16202E;--mute:#5F6B7A;--line:#D7DEE7;--user:#1F3A5F;--accent:#0B7A75;--band:#DDEFE9;--warn:#B42318;--warnbg:#FDECEA}
+  @media (prefers-color-scheme:dark){:root{--bg:#0F151D;--panel:#17202B;--ink:#E8EDF3;--mute:#98A4B3;--line:#2A3645;--user:#2D4F7C;--accent:#4FC3BC;--band:#173A38;--warn:#FF9A8F;--warnbg:#3A1A18}}
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--ink);font:16px/1.5 "Instrument Sans",system-ui,sans-serif;display:flex;justify-content:center}
+  main{width:100%;max-width:760px;height:100%;display:flex;flex-direction:column;padding:16px;gap:12px}
+  header h1{font:500 26px/1.1 Newsreader,serif;margin:0 0 2px}
+  header p{margin:0;color:var(--mute);font-size:14px}
+  .strip{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .stats{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:6px;font-size:14px;color:var(--mute)}
+  .stats b{display:block;font:500 22px/1.1 Newsreader,serif;color:var(--ink)}
+  svg{width:100%;height:84px;display:block}
+  #chat{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:4px 2px}
+  .msg{max-width:86%;padding:10px 14px;border-radius:14px;white-space:pre-wrap}
+  .bot{background:var(--panel);border:1px solid var(--line);align-self:flex-start;font-family:Newsreader,serif;font-size:17px;line-height:1.55}
+  .me{background:var(--user);color:#fff;align-self:flex-end}
+  .alert{background:var(--warnbg);color:var(--warn);border-radius:10px;padding:8px 12px;font-size:14px;margin-bottom:8px;font-family:"Instrument Sans",sans-serif}
+  .src{margin-top:8px;font:13px "Instrument Sans",sans-serif;color:var(--mute)}
+  .src a{color:var(--accent)}
+  .chips{display:flex;gap:8px;flex-wrap:wrap}
+  .chips button{background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:999px;padding:6px 12px;font:inherit;font-size:14px;cursor:pointer}
+  form{display:flex;gap:8px}
+  input{flex:1;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit}
+  .send{background:var(--accent);color:#fff;border:0;border-radius:12px;padding:0 20px;font:600 15px inherit;cursor:pointer}
+  button:disabled{opacity:.5;cursor:default}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .note{font-size:12px;color:var(--mute);text-align:center}
+</style>
+</head>
+<body>
+<main>
+  <header><h1>Glucose Coach</h1><p>Ask about your last 12 hours. Education only, not medical advice.</p></header>
+
+  <section class="strip" aria-label="Last 12 hours" hidden>
+    <div class="stats" id="stats"></div>
+    <svg id="plot" viewBox="0 0 720 84" preserveAspectRatio="none" role="img" aria-label="Glucose over the last 12 hours"></svg>
+  </section>
+
+  <div id="chat" aria-live="polite"></div>
+
+  <div class="chips" id="chips"></div>
+  <form id="form">
+    <input id="q" placeholder="Why did my glucose rise after lunch?" autocomplete="off" aria-label="Your question">
+    <button class="send" id="send">Send</button>
+  </form>
+  <div class="note">Doesn't give medication or insulin doses. Talk to your care team for treatment decisions.</div>
+</main>
+
+<script>
+const chat = document.getElementById("chat"), form = document.getElementById("form"),
+      q = document.getElementById("q"), send = document.getElementById("send");
+const history = [];
+
+const SUGGESTIONS = ["Why did my glucose rise after my pasta meal?", "How does my activity affect my glucose?", "Is my time in range good?", "What can I do about post-meal spikes?"];
+document.getElementById("chips").innerHTML = SUGGESTIONS.map(s => `<button type="button">${s}</button>`).join("");
+document.getElementById("chips").addEventListener("click", e => { if (e.target.tagName === "BUTTON") ask(e.target.textContent); });
+
+function esc(s){ return s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+function add(role, html){
+  const d = document.createElement("div");
+  d.className = "msg " + (role === "user" ? "me" : "bot");
+  d.innerHTML = html; chat.appendChild(d); chat.scrollTop = chat.scrollHeight; return d;
+}
+
+async function ask(text){
+  if (!text.trim()) return;
+  add("user", esc(text)); q.value = ""; send.disabled = true;
+  const typing = add("bot", "Thinking…");
+  try {
+    const r = await fetch("/api/chat", {method:"POST", headers:{"Content-Type":"application/json"},
+                          body: JSON.stringify({message: text, history})});
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const data = await r.json();
+    history.push({role:"user", content:text}, {role:"assistant", content:data.answer});
+    typing.innerHTML = data.alerts.map(a => `<div class="alert">${esc(a)}</div>`).join("") + esc(data.answer) +
+      (data.sources.length ? `<div class="src">Sources: ${data.sources.map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener">[${s.n}]</a>`).join(" ")}</div>` : "");
+  } catch (err) {
+    typing.innerHTML = `<div class="alert">Couldn't get an answer: ${esc(String(err.message))}. Check that the backend is running and the knowledge base is built.</div>`;
+  }
+  send.disabled = false; q.focus(); chat.scrollTop = chat.scrollHeight;
+}
+form.addEventListener("submit", e => { e.preventDefault(); ask(q.value); });
+
+async function loadContext(){
+  const c = await (await fetch("/api/context")).json(), g = c.glucose;
+  document.getElementById("stats").innerHTML =
+    `<div><b>${g.latest}</b>mg/dL now, ${g.trend_15min}</div><div><b>${g.time_in_range_pct}%</b>in range</div>` +
+    `<div><b>${c.watch.total_steps.toLocaleString()}</b>steps</div><div><b>${c.watch.avg_hr}</b>avg bpm</div>`;
+  const v = g.readings.map(x => x.mg_dl), W = 720, H = 84, lo = 50, hi = 260;
+  const y = n => H - (Math.min(Math.max(n, lo), hi) - lo) / (hi - lo) * H;
+  const pts = v.map((n, i) => `${(i / (v.length - 1) * W).toFixed(1)},${y(n).toFixed(1)}`).join(" ");
+  const t0 = new Date(g.readings[0].time).getTime(), t1 = new Date(g.readings.at(-1).time).getTime();
+  const marks = c.meals.map(m => { const x = (new Date(m.time) - t0) / (t1 - t0) * W;
+    return `<line x1="${x}" x2="${x}" y1="0" y2="${H}" stroke="var(--mute)" stroke-dasharray="3 3"/><text x="${Math.min(x + 4, W - 70)}" y="12" font-size="11" fill="var(--mute)">${esc(m.name.split(" ")[0])}</text>`; }).join("");
+  document.getElementById("plot").innerHTML =
+    `<rect x="0" y="${y(180)}" width="${W}" height="${y(70) - y(180)}" fill="var(--band)"/>${marks}` +
+    `<polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`;
+}
+loadContext().catch(() => {});
+add("bot", "Hi! I can see your last 12 hours of glucose, meals, steps, and heart rate. What would you like to understand?");
+</script>
+</body>
+</html>

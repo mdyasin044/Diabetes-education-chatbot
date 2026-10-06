@@ -1,0 +1,38 @@
+# Secrets (never commit API keys)
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Vector database (rebuild with: python ingest.py)
+backend/chroma_db/
+chroma_db/
+
+# Downloaded knowledge files (add back if you want to share them and licenses allow)
+knowledge/*.pdf
+!knowledge/.gitkeep
+
+# Logs and local data
+*.log
+*.sqlite3
+*.db
+
+# Hugging Face / model caches
+.cache/
+huggingface/
+
+# IDE and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
